@@ -94,7 +94,11 @@ export async function startMailWorld(): Promise<MailWorld> {
       if (cmd === 'LOGOUT') { send('* BYE bye'); send(`${tag} OK bye`); return void socket.end(); }
       if (cmd === 'NOOP') return send(`${tag} OK noop`);
       if (!authed) return send(`${tag} BAD not authenticated`);
-      if (cmd === 'LIST') { for (const name of folders.keys()) send(`* LIST (\\HasNoChildren) "/" "${name}"`); return send(`${tag} OK listed`); }
+      if (cmd === 'LIST' || cmd === 'LSUB') {
+        if (cmd === 'LIST' && t[2] === '') send('* LIST (\\Noselect) "/" ""');
+        else if (cmd === 'LIST') for (const name of folders.keys()) if (t[2] === '*' || t[2] === '%' || t[2] === name) send(`* LIST (\\HasNoChildren) "/" "${name}"`);
+        return send(`${tag} OK listed`);
+      }
       if (cmd === 'SELECT' || cmd === 'EXAMINE') {
         const f = folders.get(t[1] ?? '');
         if (f === undefined) return send(`${tag} NO no such mailbox`);

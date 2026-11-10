@@ -56,7 +56,7 @@ export const DEFAULT_RULES: MailRules = {
   quoteMarkers: DEFAULT_QUOTE_MARKERS, maxAutomatedBodyChars: 2400, defaultLocale: 'en',
 };
 
-const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f  ]/u;
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]/u;
 const CONTROL_G = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu;
 export function line(value: unknown, label: string, max: number): string {
   invariant(typeof value === 'string' && value.trim().length > 0 && value.length <= max, 'invalid_input', `${label} must be non-empty and at most ${max} characters`);
@@ -132,7 +132,7 @@ export function findIdentityClaims(text: string, profile: SenderProfile, rules: 
   const prefixes = [...rules.claimPrefixes].sort((a, b) => b.length - a.length).map(escapeRe).join('|');
   const starts = rules.sentenceClaimPrefixes.map(escapeRe).join('|');
   const lead = `(?:(?<![\\p{L}\\p{N}])(?:${prefixes})${starts === '' ? '' : `|(?:^|[.!?:;]\\s+|\\n\\s*)(?:${starts})`})`;
-  const re = new RegExp(`${lead}\\s+(?:(?:a|an|the|your|one of the)\\s+)?(?:[\\p{L}'’-]+\\s+){0,3}?(${terms.map(escapeRe).join('|')})(?![\\p{L}\\p{N}])`, 'giu');
+  const re = new RegExp(`${lead}\\s+(?:(?:a|an|the|your|one of the)\\s+)?(?:[\\p{L}'’-]+\\s+){0,3}?(${terms.map(escapeRe).join('|')})(?:s|es)?(?![\\p{L}\\p{N}])`, 'giu');
   const found = new Set<string>();
   for (const m of text.matchAll(re)) found.add((m[1] as string).toLowerCase());
   // Honorifics and credentials in a self-description are identity claims as well.

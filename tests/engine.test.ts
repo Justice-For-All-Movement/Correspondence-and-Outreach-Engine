@@ -58,7 +58,7 @@ test('acceptance B: question to contact plan, truthful inquiry under a grant, re
     assert.match(wire, /reply STOP/);
     assert.doesNotMatch(wire, /text\/html|<img/i);
     const raw = await h.engine.getRawMessage(human(), draft.id);
-    assert.deepEqual(Buffer.from(raw.bytes), delivered.raw.subarray(0, raw.bytes.byteLength).equals(Buffer.from(raw.bytes)) ? Buffer.from(raw.bytes) : delivered.raw);
+    assert.equal(Buffer.from(raw.bytes).toString('latin1').trimEnd(), delivered.raw.toString('latin1').trimEnd());
     assert.equal((await h.engine.getGrant(human(), grantId)).usedMessages, 1);
 
     // The response arrives through the provider-independent raw ingest path, twice (duplicated webhook).
@@ -242,7 +242,7 @@ test('takeover before dispatch fences queued automated sends; accepted mail stay
     // Even after control returns, the stale-epoch dispatch can never be sent.
     await h.sql.query(`update e03_correspondence.mailboxes set control_mode='automation', control_epoch=control_epoch+1 where id=$1`, [mailboxId]);
     await h.sql.query(`update e03_correspondence.dispatches set state='queued' where id=$1`, [queued.id]);
-    await h.sql.query(`update e03_correspondence._jobs set state='queued', attempts=0, run_at=now() where id=$1`, [fenced.jobId]);
+    await h.sql.query(`update e03_correspondence._jobs set state='queued', attempts=0, run_at=now() - interval '1 minute' where id=$1`, [fenced.jobId]);
     await drain(h.engine);
     assert.equal((await h.engine.getDispatch(human(), queued.id as string)).state, 'cancelled');
     assert.equal(h.world.smtpTransactions, 2);
@@ -275,7 +275,7 @@ test('ambiguous send: connection drops after DATA; reconciled by Message-ID, nev
     await drain(h.engine);
     assert.equal(h.world.smtpTransactions, 1);
     const reconciled = await h.engine.getDispatch(human(), d.id as string);
-    assert.equal(reconciled.state, 'accepted');
+    assert.equal(reconciled.state, 'accepted', JSON.stringify([reconciled.reconciliation, h.world.imapCommands]));
     assert.ok(reconciled.reconciledAt);
     assert.equal((reconciled.reconciliation as any).method, 'provider_lookup');
     assert.equal((reconciled.reconciliation as any).where, 'Sent');
@@ -290,8 +290,9 @@ test('ambiguous send: connection drops after DATA; reconciled by Message-ID, nev
     const b = await plannedInquiry(h, mailboxId, 'registrar@example.net', bot);
     h.world.smtpMode = 'drop-after-data-lose';
     const lost = await h.engine.sendMessage(bot, b.draft.id, { grantId: b.grantId });
-    h.world.smtpMode = 'accept';
     const limited = h.make({ reconcileAttempts: 2 });
+    await limited.runWorkerOnce();
+    h.world.smtpMode = 'accept';
     await drain(limited);
     const still = await limited.getDispatch(human(), lost.id as string);
     assert.equal(still.state, 'uncertain');
@@ -345,7 +346,7 @@ test('provider refusals: permanent rejection fails, temporary failure retries, b
     await h.engine.runWorkerOnce();
     assert.equal((await h.engine.getDispatch(human(), d2.id as string)).state, 'queued');
     h.world.smtpMode = 'accept';
-    await h.sql.query(`update e03_correspondence._jobs set run_at=now() where state='queued'`);
+    await h.sql.query(`update e03_correspondence._jobs set run_at=now() - interval '1 minute' where state='queued'`);
     await drain(h.engine);
     const ok = await h.engine.getDispatch(human(), d2.id as string);
     assert.equal(ok.state, 'accepted');

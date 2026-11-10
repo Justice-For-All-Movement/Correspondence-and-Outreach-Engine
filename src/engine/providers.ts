@@ -159,7 +159,7 @@ export type ComposeInput = Readonly<{
 export async function composeMime(input: ComposeInput): Promise<Buffer> {
   const composer = new MailComposer({
     from: { name: input.from.name, address: input.from.address }, to: [...input.to], ...(input.cc.length === 0 ? {} : { cc: [...input.cc] }),
-    subject: input.subject, text: input.text, messageId: input.messageId, date: input.date,
+    subject: input.subject, text: input.text.replace(/\r?\n/g, '\r\n'), newline: '\r\n', messageId: input.messageId, date: input.date,
     ...(input.inReplyTo === null ? {} : { inReplyTo: input.inReplyTo }), ...(input.references.length === 0 ? {} : { references: [...input.references] }),
     headers: input.automated ? { 'Auto-Submitted': 'auto-generated', 'X-Automated-Sender': 'research-assistant' } : {},
     attachments: input.attachments.map((a) => ({ filename: a.filename, contentType: a.mediaType, content: Buffer.from(a.content) })),
