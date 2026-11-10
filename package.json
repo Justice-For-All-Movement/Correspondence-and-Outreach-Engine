@@ -19,6 +19,18 @@
     "./operator": {
       "types": "./dist/operator.d.ts",
       "default": "./dist/operator.js"
+    },
+    "./engine": {
+      "types": "./dist/engine/index.d.ts",
+      "default": "./dist/engine/index.js"
+    },
+    "./serve": {
+      "types": "./dist/engine/serve.d.ts",
+      "default": "./dist/engine/serve.js"
+    },
+    "./service-kit": {
+      "types": "./dist/service-kit.d.ts",
+      "default": "./dist/service-kit.js"
     }
   },
   "engines": {
@@ -30,11 +42,14 @@
     "test:package": "node scripts/check-package.mjs",
     "check": "npm run typecheck && npm test && npm run build && node scripts/validate-pr-registry.mjs && node scripts/verify-contracts.mjs && npm run test:package",
     "build": "tsc -p tsconfig.build.json",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "serve": "node src/engine/serve.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.12",
     "@types/node": "26.6.5",
+    "@types/pg": "8.23.1",
+    "smtp-server": "3.21.3",
     "typescript": "7.0.2"
   },
   "files": [
@@ -43,6 +58,10 @@
     "docs"
   ],
   "dependencies": {
-    "@accountability/evidence": "git+https://github.com/neophilism/Evidence-Storage-and-Provenance-Engine.git#dce7105a70b42d77afe4cd48d34723331447037c"
+    "@accountability/evidence": "git+https://github.com/Justice-For-All-Movement/evidence-storage-and-provenance-engine.git#dce7105a70b42d77afe4cd48d34723331447037c",
+    "imapflow": "2.11.0",
+    "mailparser": "3.14.2",
+    "nodemailer": "10.4.0",
+    "pg": "8.23.1"
   }
 }
