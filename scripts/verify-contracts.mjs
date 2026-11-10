@@ -14,3 +14,7 @@ if (manifest.dependencies?.['@accountability/evidence'] !== pin || lock.packages
 if (!import.meta.resolve('@accountability/evidence/database').endsWith('/dist/database.js'))
   throw new Error('Evidence persistence must resolve to compiled ESM');
 console.log('Evidence database SDK matches approved lockfile pin and compiled ESM export');
+
+const kit = createHash('sha256').update(await readFile(new URL('../src/service-kit.ts', import.meta.url))).digest('hex');
+if (kit !== '95475a907267ba1fdd54b557aabe5645c37add9788a5b2d0854d9accfd5d8ea5') throw new Error('Vendored service kit differs from the Identity engine copy (1.0.1)');
+console.log('Service kit matches the vendored 1.0.1 digest');
