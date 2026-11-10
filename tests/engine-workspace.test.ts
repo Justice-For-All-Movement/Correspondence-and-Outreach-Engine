@@ -315,6 +315,11 @@ test('ports: budget reservation per send, evidence hand-off, sensitive contacts,
     const witness = await e.upsertContact(a, { address: 'witness@example.net', sensitive: true, whyMayKnow: 'saw it' });
     const wd = await e.createDraft(a, { mailboxId, contactId: witness.id as string, subject: 'Hello', body: 'Text' });
     await assert.rejects(e.sendMessage(a, wd.id as string), code('consent_denied'));
+    const asked: string[][] = [];
+    const decided = h.make({}, { useDecision: { decide: async (_c, r) => { asked.push([...r.subjects, r.action]); return { decision: asked.length === 1 ? 'review' : 'allow', reasons: [], permissionRefs: [], restrictions: [], decidedAt: new Date().toISOString() }; } } });
+    await assert.rejects(decided.sendMessage(a, wd.id as string), code('consent_denied'));
+    assert.equal((await decided.sendMessage(a, wd.id as string)).state, 'queued');
+    assert.deepEqual(asked[0], [`E03:contact:${witness.id}`, 'contact']);
     // E08 port: plan for a question from a lead, draft (not sent), thread state.
     await e.upsertContact(a, { address: 'lead@example.net', whyMayKnow: 'named in the register', routeSource: 'E04:lead:l55' });
     const port = correspondencePort(e, { mailboxId });

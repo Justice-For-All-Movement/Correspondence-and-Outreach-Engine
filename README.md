@@ -45,3 +45,20 @@ For provider synchronization and reply ingestion, see the [SDK contract and offi
 For the durable aggregate and real `MailboxSyncStore`, use `CorrespondenceRepository` from `@accountability/correspondence/durable` and read the [dedicated-database persistence contract](docs/DURABILITY.md). It reuses the pinned Evidence generic persistence SDK in a separate correspondence database; it never connects to upstream operational databases.
 
 See [architecture](docs/ARCHITECTURE.md), [source provenance](docs/PROVENANCE.md), and the [canonical work registry](registry/prs.json). Contracts are vendored byte-identical from Identity commit `2ecac5a7ec01e4470774ef545060b99dba38014d`. The merged foundation is tracked in [PR #1](https://github.com/neophilism/Correspondence-and-Outreach-Engine/pull/1). The merged synchronization SDK is tracked in [PR #2](https://github.com/neophilism/Correspondence-and-Outreach-Engine/pull/2); durable persistence is tracked in [PR #3](https://github.com/neophilism/Correspondence-and-Outreach-Engine/pull/3). Local checks, CI, merge and live acceptance are separate evidence.
+
+## Service layer
+
+`src/engine/` adds the persisted service used by the Public Accountability Machine: a Gmail-like mail workspace API, contact plans for unresolved questions, bounded sending grants, human takeover, a dispatch queue with reconciliation of uncertain sends, and inbound ingestion with deterministic classification. Full surface, events, limits and honest status: [`docs/ENGINE_API.md`](docs/ENGINE_API.md).
+
+```sh
+npm ci
+TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/postgres npm run check   # engine tests are skipped visibly without it
+DATABASE_URL=postgresql://… IDENTITY_PUBLIC_KEYS='{"kid":"-----BEGIN PUBLIC KEY-----…"}' \
+  CORRESPONDENCE_SECRET_KEY="$(head -c 32 /dev/urandom | base64)" OBJECT_STORE_PATH=./data/objects npm run serve
+```
+
+```ts
+import { createEngine, migrate, routes } from '@accountability/correspondence/engine';
+```
+
+The note above that outbound execution is fake-only describes the earlier foundation modules; the service layer sends through real SMTP, Gmail API or Microsoft Graph adapters when a mailbox is configured with credentials, and reports `unavailable` otherwise. Gmail and Graph adapters are implemented but not verified against live providers.

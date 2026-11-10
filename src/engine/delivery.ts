@@ -37,7 +37,12 @@ export function delivery(core: Core, ws: ReturnType<typeof workspace>) {
     if (hit !== null) return { code: 'suppressed', message: 'A recipient has refused contact or is suppressed' };
     const contact = thread.contact_id === null ? undefined : (await tx.query(`select c.* from ${S}.contacts c where ${T('c')} and c.id=$4`, sc(ctx, thread.contact_id)))[0];
     if (p.mode === 'human') {
-      if (contact?.sensitive === true && core.ports.useDecision === undefined && !core.cfg.standaloneAllowSensitiveContact) return { code: 'consent_denied', message: 'Contact with a sensitive contact needs a use decision; no decision service is connected' };
+      if (contact?.sensitive === true) {
+        if (core.ports.useDecision === undefined) return core.cfg.standaloneAllowSensitiveContact ? null : { code: 'consent_denied', message: 'Contact with a sensitive contact needs a use decision; no decision service is connected' };
+        let allowed = false;
+        try { allowed = (await core.ports.useDecision.decide(ctx, { subjects: [ref('contact', contact.id as string), ...(contact.sources as string[])], action: 'contact', purpose: ctx.purpose })).decision === 'allow'; } catch { allowed = false; }
+        if (!allowed) return { code: 'consent_denied', message: 'The use decision does not allow contacting this sensitive contact' };
+      }
       return null;
     }
     // Automated sending: control, consent state, contact route and the grant, all re-read under lock.
