@@ -440,7 +440,7 @@ export function delivery(core: Core, ws: ReturnType<typeof workspace>) {
           [ctx.tenantId, ctx.projectId, attachmentId, messageId, thread.id, thread.compartment, a.filename, a.mediaType, info.size, info.sha256, info.key, a.contentId, ctx.now]);
       }
       await tx.query(`update ${S}.threads t set last_message_at=$5, archived=false, updated_at=$5 where ${T('t')} and t.id=$4`, sc(ctx, thread.id, ctx.now));
-      const subject = ref('message', messageId, 1); const contactId = thread.contact_id as string | null;
+      const subject = ref('message', messageId); const contactId = thread.contact_id as string | null;
       const candidateState = async (state: string): Promise<void> => { if (thread.plan_id !== null && contactId !== null) await tx.query(`update ${S}.plan_candidates set state=$3, updated_at=$4 where plan_id=$1 and contact_id=$2`, [thread.plan_id, contactId, state, ctx.now]); };
       const cancelQueued = async (reason: string): Promise<string[]> => {
         const rows = await tx.query<{ id: string; message_id: string; job_id: string | null }>(`update ${S}.dispatches d set state='cancelled', state_reason=$5, settled_at=$6, updated_at=$6 where ${T('d')} and d.thread_id=$4 and d.mode='automated' and d.state='queued' returning d.id, d.message_id, d.job_id`, sc(ctx, thread.id, reason, ctx.now));
@@ -509,10 +509,11 @@ export function delivery(core: Core, ws: ReturnType<typeof workspace>) {
   async function syncOnce(ctx: ServiceContext, mailboxId: string, limit: number): Promise<SyncResult> {
     const mailbox = await loadMailbox(sql, ctx, mailboxId);
     const result: SyncResult = { ingested: 0, duplicates: 0, skipped: 0, resets: 0, more: false };
+    const priorState = JSON.stringify(mailbox.sync_state);
     const finish = async (status: string, error: string | null, state?: Json): Promise<void> => {
       // The checkpoint advances only after every fetched message was ingested, and never over a concurrent run's newer checkpoint.
       await sql.query(`update ${S}.mailboxes m set last_sync_at=now(), last_sync_status=$5, last_sync_error=$6, sync_state=case when $7::jsonb is not null and m.sync_state=$8::jsonb then $7::jsonb else m.sync_state end where ${P('m')} and m.id=$4`,
-        sc(ctx, mailbox.id, status, error, state === undefined ? null : JSON.stringify(state), JSON.stringify(mailbox.sync_state)));
+        sc(ctx, mailbox.id, status, error, state === undefined ? null : JSON.stringify(state), priorState));
     };
     try {
       if (mailbox.state !== 'active') throw new DomainError('invalid_state', 'The mailbox is disabled');

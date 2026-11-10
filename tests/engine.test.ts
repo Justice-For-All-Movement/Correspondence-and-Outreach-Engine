@@ -85,7 +85,7 @@ test('acceptance B: question to contact plan, truthful inquiry under a grant, re
     assert.ok(assertions.every((a) => a.status === 'attributed_unverified' && a.attributedTo === 'custodian@example.net' && a.questionRef === QUESTION));
     const events = await eventsOf(h.engine, service(), 'correspondence.reply_received');
     assert.equal(events.length, 1);
-    assert.equal(events[0]!.subject, `E03:message:${first.message.id}@1`);
+    assert.equal(events[0]!.subject, `E03:message:${first.message.id}`);
     assert.equal(events[0]!.payload.questionRef, QUESTION);
     assert.equal(events[0]!.payload.status, 'attributed_unverified');
     assert.equal(events[0]!.payload.candidates.length, 2);

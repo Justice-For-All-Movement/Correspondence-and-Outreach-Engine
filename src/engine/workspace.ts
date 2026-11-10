@@ -451,7 +451,7 @@ export function workspace(core: Core) {
         (replyTo?.message_id_header as string | null | undefined) ?? null, refs, ctx.now]))[0] as Row;
     await snapshot(tx, ctx, row);
     if (plan !== undefined && contact !== undefined) await tx.query(`update ${S}.plan_candidates set state='drafted', thread_id=$3, updated_at=$4 where plan_id=$1 and contact_id=$2 and state='proposed'`, [plan.id, contact.id, thread.id, ctx.now]);
-    await record(tx, ctx, 'message.drafted', ref('message', row.id as string, 1), { thread: thread.id as string, origin: row.origin as string, structured: c.structured !== null }, { type: 'message.drafted', payload: { thread: ref('conversation', thread.id as string), origin: row.origin as string } });
+    await record(tx, ctx, 'message.drafted', ref('message', row.id as string), { thread: thread.id as string, origin: row.origin as string, structured: c.structured !== null }, { type: 'message.drafted', payload: { thread: ref('conversation', thread.id as string), origin: row.origin as string } });
     return row;
   }
   async function createDraft(ctx: ServiceContext, input: DraftInput & { idempotencyKey?: string }): Promise<View> {
@@ -474,7 +474,7 @@ export function workspace(core: Core) {
         search=${TSV('$7', '$8', `m.from_addr || ' ' || array_to_string($5::text[], ' ')`)} where ${T('m')} and m.id=$4 returning *`,
         sc(ctx, row.id, to, cc, c.subject, c.body, c.structured === null ? null : JSON.stringify(c.structured), JSON.stringify(c.flags), changed ? (human ? 'human' : 'agent') : row.origin, changed ? ctx.actor.id : row.author_id, ctx.now)))[0] as Row;
       await snapshot(tx, ctx, next);
-      await record(tx, ctx, 'message.draft_updated', ref('message', row.id as string, next.revision as number), { revision: next.revision as number, by: ctx.actor.kind });
+      await record(tx, ctx, 'message.draft_updated', ref('message', row.id as string), { revision: next.revision as number, by: ctx.actor.kind });
       return messageView(next);
     });
   }

@@ -55,7 +55,7 @@ export function createEngine(deps: EngineDeps): CorrespondenceEngine {
     const row = (await sql.query(`select x.* from ${S}.${t.table} x where ${t.scope('x')} and x.id=$4`, sc(ctx, parsed.id)))[0];
     if (row === undefined) return null;
     const subject = ref(parsed.kind, parsed.id);
-    const audit = await listAudit(sql, S, ctx, { subject, limit: 200 });
+    let audit = await listAudit(sql, S, ctx, { subject, limit: 200 });
     const reasons = [...(Array.isArray(row.stale_reasons) ? row.stale_reasons : []), ...(Array.isArray(row.block_reasons) ? row.block_reasons : [])].map((r) => String((r as { reason?: unknown }).reason ?? (r as { note?: unknown }).note ?? ''));
     const sources = [...new Set([...(Array.isArray(row.sources) ? row.sources as string[] : []), ...[row.question_ref, row.route_source].filter((s): s is string => typeof s === 'string'),
       ...(parsed.kind === 'message' ? [ref('conversation', row.thread_id as string)] : []), ...(parsed.kind === 'dispatch' ? [ref('message', row.message_id as string)] : [])])];
@@ -63,6 +63,11 @@ export function createEngine(deps: EngineDeps): CorrespondenceEngine {
     const data: View = {};
     for (const [k, v] of Object.entries(row)) if (!['search', 'secret_enc', 'raw_key', 'object_key', 'dedupe_key', 'body_html', 'body_text', 'config', 'sync_state'].includes(k)) data[k] = v instanceof Date ? v.toISOString() : (v ?? null) as Json;
     if (parsed.kind === 'conversation') {
+      // A conversation's history is the history of its messages.
+      const subjects = (await sql.query<{ id: string }>(`select m.id from ${S}.messages m where ${W('m')} and m.thread_id=$4 limit 500`, sc(ctx, parsed.id))).map((m) => ref('message', m.id));
+      const all: typeof audit = [...audit];
+      for (const s of subjects.slice(0, 50)) all.push(...await listAudit(sql, S, ctx, { subject: s, limit: 50 }));
+      audit = all.sort((x, y) => x.tenantSeq - y.tenantSeq);
       dependents = [...(await sql.query<{ id: string }>(`select m.id from ${S}.messages m where ${W('m')} and m.thread_id=$4 order by m.created_at limit 500`, sc(ctx, parsed.id))).map((m) => ref('message', m.id)),
         ...(await sql.query<{ id: string }>(`select d.id from ${S}.dispatches d where ${W('d')} and d.thread_id=$4 limit 500`, sc(ctx, parsed.id))).map((d) => ref('dispatch', d.id))];
       permissions = (await sql.query(`select distinct g.id, g.grantee_id, g.state, g.expires_at from ${S}.grants g join ${S}.dispatches d on d.grant_id=g.id where ${P('g')} and d.thread_id=$4`, sc(ctx, parsed.id))).map((g) => ({ grant: ref('grant', g.id as string), grantee: g.grantee_id as string, state: g.state as string, expiresAt: (g.expires_at as Date).toISOString() }));

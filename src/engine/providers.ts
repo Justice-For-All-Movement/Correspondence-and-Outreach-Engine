@@ -322,7 +322,7 @@ function smtpImapAdapter(input: AdapterInput): MailAdapter {
       } catch (error) { return { kind: 'unavailable', reason: error instanceof DomainError ? error.message : 'IMAP lookup failed' }; }
     },
     async sync(stateJson, limit) {
-      const state: ImapState = { folders: { ...((stateJson as unknown as ImapState | null)?.folders ?? {}) } };
+      const state: ImapState = { folders: structuredClone((stateJson as unknown as ImapState | null)?.folders ?? {}) };
       const imap = config.imap!;
       const messages: { providerId: string; raw: Uint8Array }[] = []; const skipped: { providerId: string; reason: string }[] = [];
       let more = false, resets = 0;
