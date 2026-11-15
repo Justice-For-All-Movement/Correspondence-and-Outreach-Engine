@@ -87,6 +87,15 @@ test('mail workspace: folders, counts, labels, bulk actions, assignment, search,
     const scan = (thread.messages as any[])[1].attachments[0];
     assert.equal(scan.filename, 'scan.pdf');
     assert.equal(Buffer.from((await e.getAttachment(me, scan.id)).bytes).toString(), '%PDF-fake');
+    // Inbound HTML: the original is kept as untrusted data; the sanitized rendering is inert.
+    const htmlMime = ['From: clerk@example.net', 'To: desk@example.org', 'Subject: Ledger photo', 'Message-ID: <html-1@mail.example.net>', 'MIME-Version: 1.0', 'Content-Type: text/html; charset=utf-8', '',
+      '<p onclick="x()">Ledger <b>B</b>, page 12.</p><img src="https://tracker.invalid/p.gif"><script>alert(1)</script><a href="javascript:alert(2)">open</a> <a href="https://records.example.org/b">record</a>', ''].join('\r\n');
+    const htmlIn = await e.ingestRawMessage(service(), mailboxId, Buffer.from(htmlMime));
+    const htmlMsg = await e.getMessage(me, htmlIn.message.id as string);
+    assert.match(String(htmlMsg.untrustedHtml), /<script>alert\(1\)<\/script>/);
+    assert.equal(String(htmlMsg.sanitizedHtml).trim(), '<p>Ledger <b>B</b>, page 12.</p><a rel="noopener noreferrer nofollow">open</a> <a href="https://records.example.org/b" rel="noopener noreferrer nofollow">record</a>');
+    assert.match(String(htmlMsg.htmlSanitizer), /^sanitize-html@/);
+    assert.equal((await e.getMessage(me, inbound.message.id as string)).sanitizedHtml, null);
     const re = await e.createDraft(me, { replyToMessageId: inbound.message.id as string, body: 'Thank you.' });
     assert.deepEqual([re.toAddrs, re.subject, re.inReplyTo, re.threadId], [['clerk@example.net'], 'Re: Depot ledger', '<att-1@mail.example.net>', draft.threadId]);
     assert.equal((await e.discardDraft(me, re.id as string)).state, 'discarded');

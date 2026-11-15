@@ -1,5 +1,6 @@
 // Mail workspace: mailboxes, contacts, suppression, labels, threads, drafts, attachments, outreach plans, grants, takeover.
 import { randomUUID } from 'node:crypto';
+import { HTML_SANITIZER, sanitizeInboundHtml } from './html.ts';
 import { DomainError, hashBytes, invariant } from '../contracts.ts';
 import type { Json } from '../contracts.ts';
 import { requireCapability } from '../service-kit.ts';
@@ -375,6 +376,9 @@ export function workspace(core: Core) {
     requireCapability(ctx, 'correspondence:read');
     const row = (await sql.query(`select ${MESSAGE_COLS}, m.body_html as untrusted_html from ${S}.messages m where ${W('m')} and m.id=$4`, sc(ctx, id(messageId))))[0] ?? notFound();
     const v = messageView(row);
+    // The original HTML stays available as untrusted data; `sanitizedHtml` is the allow-listed rendering for display.
+    v.sanitizedHtml = sanitizeInboundHtml(row.untrusted_html as string | null);
+    if (v.sanitizedHtml !== null) v.htmlSanitizer = HTML_SANITIZER;
     v.attachments = views(await sql.query(`select a.id, a.message_id, a.filename, a.media_type, a.size, a.sha256, a.content_id, a.evidence_ref, a.created_at from ${S}.attachments a where ${W('a')} and a.message_id=$4 and not a.removed order by a.created_at`, sc(ctx, row.id)));
     v.versions = views(await sql.query(`select v.revision, v.actor_id, v.at, v.snapshot from ${S}.message_versions v where ${P('v')} and v.message_id=$4 order by v.revision`, sc(ctx, row.id)));
     return v;

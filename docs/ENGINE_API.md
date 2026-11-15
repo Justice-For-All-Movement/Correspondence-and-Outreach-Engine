@@ -91,7 +91,7 @@ counts(ctx, { mailboxId? }): Promise<{ folders: Record<Folder, { total, unread }
 getThread(ctx, threadId, { markRead? }): Promise<View>                   // + messages[] (with attachments[]), dispatches[], assertions[], labels[], contact, automation
 modifyThreads(ctx, { threadIds, addLabelIds?, removeLabelIds?, archived?, trashed?, spam?, starred?, read?, assignee?: string|null, idempotencyKey? }): Promise<{ updated: string[] }>   // †
 searchMessages(ctx, { q, mailboxId?, limit?, cursor? }): Promise<Page<View>>   // tsvector 'simple', websearch syntax, headline
-getMessage(ctx, messageId): Promise<View>                                // + attachments[], versions[], untrustedHtml
+getMessage(ctx, messageId): Promise<View>                                // + attachments[], versions[], untrustedHtml, sanitizedHtml, htmlSanitizer
 getRawMessage(ctx, messageId): Promise<{ bytes: Uint8Array; sha256: string; filename: string }>
 createLabel(ctx, { name, color?, idempotencyKey? }): Promise<View>;  listLabels(ctx): Promise<View[]>
 updateLabel(ctx, labelId, { name?, color? }): Promise<View>;  deleteLabel(ctx, labelId): Promise<{ deleted: true }>
@@ -271,7 +271,12 @@ Not implemented / limits:
 - No push notifications (Gmail watch, Graph subscriptions, IMAP IDLE); sync is polled. Provider-side read/label state is not written back.
 - Gmail/Graph sync fetches each changed message twice (normalized by the existing sync core, then raw bytes).
 - Host checks reject private/loopback literals and unqualified names but do not defend against DNS rebinding.
-- Inbound HTML is stored and returned as `untrustedHtml` without sanitization; a UI must sandbox or not render it. No malware scanning of attachments.
+- Inbound HTML is stored unchanged and returned as `untrustedHtml` (evidence; never render it). `getMessage` also returns
+  `sanitizedHtml`, an allow-list rendering (`sanitize-html` 2.18.1, `htmlSanitizer` names the policy): text and basic structure
+  (paragraphs, emphasis, lists, quotes, headings, tables) only; scripts, styles, event handlers, forms, frames, SVG/MathML and
+  every image are removed (remote images are tracking beacons; inline `cid:` images are not mapped to attachments); links keep
+  only http/https/mailto and get `rel="noopener noreferrer nofollow"`. It is computed on read, not stored. A UI should
+  still render it in a sandboxed frame with a restrictive CSP as defence in depth. No malware scanning of attachments.
 - Role-claim, opt-out and quote-marker rules ship with English defaults; other languages need `rules` configuration.
   Role-claim screening is pattern-based and can be evaded or over-trigger.
 - Assertion candidates are paragraphs of the new reply text (deterministic), not semantic extraction.
