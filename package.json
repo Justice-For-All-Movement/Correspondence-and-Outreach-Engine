@@ -49,6 +49,7 @@
     "@electric-sql/pglite": "0.5.12",
     "@types/node": "26.6.5",
     "@types/pg": "8.23.1",
+    "@types/sanitize-html": "2.16.0",
     "smtp-server": "3.21.3",
     "typescript": "7.0.2"
   },
@@ -62,6 +63,7 @@
     "imapflow": "2.11.0",
     "mailparser": "3.14.2",
     "nodemailer": "10.4.0",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "sanitize-html": "2.18.1"
   }
 }
