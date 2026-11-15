@@ -408,3 +408,33 @@ test('truthful identity: role claims rejected for agents, disclosure cannot be r
     assert.deepEqual(allowed.identityFlags, []);
   });
 });
+
+test('no response: an answered-by-nobody inquiry is recorded after the wait; auto-replies do not count; a later reply still wins', { skip }, async () => {
+  await withHarness(async (h) => {
+    const { correspondencePort } = await import('../src/engine/index.ts');
+    const mailboxId = await controlledMailbox(h);
+    const bot = agent();
+    const { draft, grantId } = await plannedInquiry(h, mailboxId, 'silent@example.net', bot);
+    await h.engine.sendMessage(bot, draft.id, { grantId, idempotencyKey: 'nr-send' });
+    await drain(h.engine);
+    const sent = (await h.engine.listDispatches(human(), { threadId: draft.threadId }))[0] as any;
+    const later = (days: number): ServiceContext => ({ ...human(), now: new Date(Date.now() + days * 86_400_000).toISOString() });
+    await assert.rejects(h.engine.sweepNoResponse({ ...human(), capabilities: ['correspondence:read'] }), code('forbidden'));
+    assert.deepEqual((await h.engine.sweepNoResponse(later(5))).marked, [], 'too early');
+    // An out-of-office reply is not a response.
+    await h.engine.ingestRawMessage(service(), mailboxId, reply({ from: 'silent@example.net', to: 'desk@example.org', inReplyTo: sent.messageIdHeader, messageId: '<ooo@mail.example.net>', subject: 'Out of office', body: 'I am out of the office until next month.', headers: ['Auto-Submitted: auto-replied'] }), { providerId: 'ooo' });
+    const { marked } = await h.engine.sweepNoResponse(later(22));
+    assert.deepEqual(marked, [`E03:conversation:${draft.threadId}`]);
+    assert.deepEqual((await h.engine.sweepNoResponse(later(23))).marked, [], 'idempotent');
+    const port = correspondencePort(h.engine, { mailboxId });
+    assert.equal((await port.getThreadState(human(), `E03:conversation:${draft.threadId}`)).state, 'no_response');
+    const events = await eventsOf(h.engine, human(), 'correspondence.no_response');
+    const ev = events.find((e) => e.type === 'correspondence.no_response')!;
+    assert.equal(ev.payload.questionRef, QUESTION);
+    // A reply arriving afterwards is still an answer.
+    await h.engine.ingestRawMessage(service(), mailboxId, reply({ from: 'silent@example.net', to: 'desk@example.org', inReplyTo: sent.messageIdHeader, messageId: '<late@mail.example.net>', body: 'Sorry for the delay: March 2019.' }), { providerId: 'late' });
+    assert.equal((await port.getThreadState(human(), `E03:conversation:${draft.threadId}`)).state, 'answered_unverified');
+    // Another organization's sweep touches nothing here.
+    assert.deepEqual((await h.engine.sweepNoResponse({ ...later(60), tenantId: 'other-tenant' })).marked, []);
+  });
+});

@@ -116,6 +116,7 @@ Sending and the dispatch queue
 ```ts
 sendMessage(ctx, messageId, { grantId?, sendAt?, idempotencyKey? }): Promise<View /* dispatch */>     // †; agents must pass grantId
 scheduleFollowUp(ctx, threadId, { grantId, sendAt, structured, idempotencyKey? }): Promise<View /* dispatch */>
+sweepNoResponse(ctx, { afterDays? (21), limit? (200) }?): Promise<{ marked: string[] }>   // write; records no_response on sent, unanswered conversations
 cancelDispatch(ctx, dispatchId, { reason? }): Promise<View>              // queued only
 listDispatches(ctx, { states?, mailboxId?, threadId?, limit? }): Promise<View[]>
 getDispatch(ctx, dispatchId): Promise<View>                              // + evidence[] (delivery events)
@@ -191,6 +192,7 @@ Bearer token (kit `createTokenVerifier`) on everything except `/healthz` and `/v
 | `GET /v1/inbox`, `GET /v1/folders`, `GET /v1/counts`, `GET /v1/conversations?folder=&labelId=&assignee=&unread=&questionRef=&contactId=&q=&limit=&cursor=` | views |
 | `POST /v1/conversations/modify`, `GET /v1/conversations/:id[?markRead=true]` | bulk action, thread |
 | `POST /v1/conversations/:id/takeover`, `…/resume`, `…/review-stale`, `…/follow-ups` | control, follow-up |
+| `POST /v1/no-response/sweep` | sweepNoResponse |
 | `GET /v1/messages/search?q=` | full-text search |
 | `POST /v1/messages`, `GET/PATCH/DELETE /v1/messages/:id` | draft create/get/update/discard |
 | `POST /v1/messages/:id/send` (202; header `Idempotency-Key`) | `sendMessage` |
@@ -276,6 +278,10 @@ Not implemented / limits:
 - `delivered` is set only from evidence (reply, DSN `delivered`); DSNs and opt-outs are not authenticated, so a forged one can
   mark a bounce or add a suppression (fail-safe direction; a human can lift a suppression).
 - Follow-ups are scheduled explicitly per call; there is no automatic cadence.
+- No response: `sweepNoResponse` (run periodically by the host) marks a conversation `no_response` when its last sent
+  inquiry or follow-up was accepted more than `afterDays` ago with no reply or refusal since and no send pending; an
+  automatic reply does not count. It emits `correspondence.no_response` (conversation, `questionRef`, `lastSentAt`), and
+  `getThreadState` reports `no_response` until a reply arrives (a later reply still shows as answered).
 - Concurrent syncs of one mailbox are safe (idempotent ingestion) but may fetch the same messages twice.
 - The earlier functional-core modules (`machine.ts`, `operator.ts`, `durable.ts`, `projections.ts`) remain exported and tested
   but the service layer does not use them; it reuses `validation.ts`, `adapters.ts` and the `sync-*` provider core.

@@ -153,4 +153,6 @@ create table {s}.upstream_changes (
   tenant_id text not null, project_id text not null, event_id text not null, kind text not null, result jsonb not null, at timestamptz not null,
   primary key (tenant_id, project_id, event_id)
 );
+` }, { id: '002_no_response', sql: `
+alter table {s}.threads add column if not exists no_response_at timestamptz;
 ` }];

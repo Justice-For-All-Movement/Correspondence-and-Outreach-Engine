@@ -9,7 +9,7 @@ import { assertionCandidates, findIdentityClaims, freeText, parseInbound, render
 import type { ParsedInbound } from './mail.ts';
 import { composeMime, sanitizeResponse } from './providers.ts';
 import type { LookupOutcome, SendOutcome } from './providers.ts';
-import { P, S, T, W, adapterFor, contactEvent, command, deliveryEvent, id, loadMailbox, notFound, objectKey, objects, page, reasons, record, ref, requireHuman, sc, suppressed, time, view, views } from './core.ts';
+import { P, S, T, W, adapterFor, int, contactEvent, command, deliveryEvent, id, loadMailbox, notFound, objectKey, objects, page, reasons, record, ref, requireHuman, sc, suppressed, time, view, views } from './core.ts';
 import type { Core, MailboxRow, View } from './core.ts';
 import { MESSAGE_COLS, dispatchView, messageView } from './workspace.ts';
 import type { workspace } from './workspace.ts';
@@ -637,5 +637,39 @@ export function delivery(core: Core, ws: ReturnType<typeof workspace>) {
     });
   }
 
-  return { sendMessage, scheduleFollowUp, cancelDispatch, listDispatches, getDispatch, reconcileDispatch, resolveDispatch, ingestRawMessage, syncMailboxNow, syncMailbox, runWorkerOnce, handToEvidence, applyUpstreamChange, reviewStale };
+  // ───────────── No response ─────────────
+  /**
+   * Records "no response" on conversations whose last sent inquiry or follow-up was accepted more than `afterDays` ago,
+   * with no reply since, no refusal and no send still pending. It is an outcome, not a failure: investigations count it
+   * as an attempt that obtained nothing. A later reply still shows as answered. Idempotent; the host runs it periodically.
+   */
+  async function sweepNoResponse(ctx: ServiceContext, input: { afterDays?: number; limit?: number } = {}): Promise<{ marked: string[] }> {
+    requireCapability(ctx, 'correspondence:write');
+    const afterDays = int(input.afterDays ?? 21, 'afterDays', 1, 365), limit = int(input.limit ?? 200, 'limit', 1, 1000);
+    const cutoff = new Date(Date.parse(ctx.now) - afterDays * 86_400_000).toISOString();
+    return sql.tx(async (tx) => {
+      const rows = await tx.query(`select t.id, t.question_ref, max(coalesce(d.accepted_at, d.settled_at)) as last_sent from ${S}.threads t
+          join ${S}.dispatches d on d.tenant_id=t.tenant_id and d.project_id=t.project_id and d.thread_id=t.id and d.state in ('accepted','delivered') and d.kind in ('initial','follow_up')
+          where ${W('t')} and not t.refused and t.no_response_at is null and not t.trashed
+            and not exists (select 1 from ${S}.dispatches p where p.tenant_id=t.tenant_id and p.project_id=t.project_id and p.thread_id=t.id and p.state in ('queued','dispatching','uncertain'))
+          group by t.id, t.question_ref
+          having max(coalesce(d.accepted_at, d.settled_at)) < $4
+            and not exists (select 1 from ${S}.messages m where m.tenant_id=t.tenant_id and m.project_id=t.project_id and m.thread_id=t.id and m.direction='inbound'
+              and coalesce(m.classification, 'reply') in ('reply','refusal') and m.received_at >= max(coalesce(d.accepted_at, d.settled_at)))
+          order by last_sent limit $5`, sc(ctx, cutoff, limit));
+      const marked: string[] = [];
+      for (const r of rows) {
+        // Lock and re-check, so concurrent sweeps record each conversation once.
+        const won = await tx.query(`update ${S}.threads set no_response_at=$4, updated_at=$4 where ${W('threads')} and id=$5 and no_response_at is null and not refused returning id`, sc(ctx, ctx.now, r.id));
+        if (won.length === 0) continue;
+        const subject = ref('conversation', r.id as string);
+        await record(tx, ctx, 'conversation.no_response', subject, { afterDays, lastSentAt: new Date(r.last_sent as string).toISOString() },
+          { type: 'correspondence.no_response', payload: { conversation: subject, questionRef: (r.question_ref as string | null) ?? null, lastSentAt: new Date(r.last_sent as string).toISOString(), afterDays } });
+        marked.push(subject);
+      }
+      return { marked };
+    });
+  }
+
+  return { sweepNoResponse, sendMessage, scheduleFollowUp, cancelDispatch, listDispatches, getDispatch, reconcileDispatch, resolveDispatch, ingestRawMessage, syncMailboxNow, syncMailbox, runWorkerOnce, handToEvidence, applyUpstreamChange, reviewStale };
 }

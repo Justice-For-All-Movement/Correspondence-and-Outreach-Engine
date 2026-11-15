@@ -21,7 +21,7 @@ export { DEFAULT_RULES, renderDisclosure, renderStructured, findIdentityClaims, 
 export const CAPABILITIES = ['correspondence:read', 'correspondence:write', 'correspondence:send', 'correspondence:contact', 'correspondence:grant', 'correspondence:admin',
   'correspondence:ingest', 'correspondence:sync', 'correspondence:upstream', 'correspondence:events'] as const;
 export const EVENTS = ['mailbox.created', 'message.drafted', 'message.queued', 'message.sent', 'message.send.uncertain', 'message.send.reconciled', 'message.send.failed', 'message.send.cancelled',
-  'message.delivered', 'message.bounced', 'message.received', 'correspondence.reply_received', 'answer.proposed', 'message.preserved_as_evidence', 'contact.refused', 'suppression.added', 'suppression.lifted',
+  'message.delivered', 'message.bounced', 'message.received', 'correspondence.reply_received', 'answer.proposed', 'message.preserved_as_evidence', 'contact.refused', 'correspondence.no_response', 'suppression.added', 'suppression.lifted',
   'outreach.plan.created', 'outreach.candidate.verified', 'grant.created', 'grant.revoked', 'conversation.taken_over', 'conversation.resumed', 'conversation.assigned', 'conversation.blocked', 'conversation.stale',
   'conversation.stale_reviewed', 'contact.blocked', 'contact.stale', 'plan.blocked', 'plan.stale'] as const;
 export const manifest: EngineManifestV1 = {
@@ -165,6 +165,7 @@ export function routes(engine: CorrespondenceEngine): Route[] {
     r('POST', '/v1/conversations/:id/takeover', (req) => e.takeover(req.ctx, target(req, 'threadId'))),
     r('POST', '/v1/conversations/:id/resume', (req) => e.resume(req.ctx, target(req, 'threadId'))),
     r('POST', '/v1/conversations/:id/review-stale', (req) => e.reviewStale(req.ctx, req.params.id as string, body(req))),
+    r('POST', '/v1/no-response/sweep', (req) => e.sweepNoResponse(req.ctx, body(req) as { afterDays?: number; limit?: number })),
     r('POST', '/v1/conversations/:id/follow-ups', (req) => e.scheduleFollowUp(req.ctx, req.params.id as string, { ...body(req), ...key(req) })),
     r('GET', '/v1/messages/search', (req) => e.searchMessages(req.ctx, defined({ q: q(req, 'q') ?? '', mailboxId: q(req, 'mailboxId'), limit: num(req, 'limit'), cursor: q(req, 'cursor') }))),
     // Messages, drafts, attachments
@@ -244,7 +245,7 @@ export function correspondencePort(engine: CorrespondenceEngine, options: { mail
       const messages = thread.messages as View[];
       const replies = messages.filter((m) => m.direction === 'inbound').map((m) => ({ ref: m.ref as string, receivedAt: m.receivedAt as string }));
       const state = thread.refused === true ? 'refused' : messages.some((m) => m.direction === 'inbound' && m.classification === 'reply') ? 'answered_unverified' : (thread.dispatches as View[]).some((d) => d.state === 'uncertain') ? 'send_uncertain'
-        : (thread.dispatches as View[]).some((d) => d.state === 'bounced') ? 'bounced' : (thread.dispatches as View[]).some((d) => d.inTransit === true || d.state === 'delivered') ? 'awaiting_response' : messages.some((m) => m.state === 'queued') ? 'queued' : 'drafted_not_sent';
+        : (thread.dispatches as View[]).some((d) => d.state === 'bounced') ? 'bounced' : thread.noResponseAt != null ? 'no_response' : (thread.dispatches as View[]).some((d) => d.inTransit === true || d.state === 'delivered') ? 'awaiting_response' : messages.some((m) => m.state === 'queued') ? 'queued' : 'drafted_not_sent';
       return { threadRef, state, replies };
     },
   };
