@@ -6,6 +6,7 @@ import type { AuditRecord, EngineEvent, EngineManifestV1, HttpRequest, HttpRespo
 import { P, S, W, id, ref, resolveConfig, sc } from './core.ts';
 import type { Core, EngineConfig, Ports, View } from './core.ts';
 import { delivery } from './delivery.ts';
+import { erasure } from './erasure.ts';
 import { parseSecretKey } from './providers.ts';
 import { SCHEMA, migrations } from './schema.ts';
 import { FOLDERS, workspace } from './workspace.ts';
@@ -19,19 +20,19 @@ export type { SenderProfile, StructuredInquiry, MailRules, DisclosureTemplate } 
 export { DEFAULT_RULES, renderDisclosure, renderStructured, findIdentityClaims, parseInbound, assertionCandidates } from './mail.ts';
 
 export const CAPABILITIES = ['correspondence:read', 'correspondence:write', 'correspondence:send', 'correspondence:contact', 'correspondence:grant', 'correspondence:admin',
-  'correspondence:ingest', 'correspondence:sync', 'correspondence:upstream', 'correspondence:events'] as const;
+  'correspondence:ingest', 'correspondence:sync', 'correspondence:upstream', 'correspondence:events', 'correspondence:erase'] as const;
 export const EVENTS = ['mailbox.created', 'message.drafted', 'message.queued', 'message.sent', 'message.send.uncertain', 'message.send.reconciled', 'message.send.failed', 'message.send.cancelled',
   'message.delivered', 'message.bounced', 'message.received', 'correspondence.reply_received', 'answer.proposed', 'message.preserved_as_evidence', 'contact.refused', 'correspondence.no_response', 'suppression.added', 'suppression.lifted',
   'outreach.plan.created', 'outreach.candidate.verified', 'grant.created', 'grant.revoked', 'conversation.taken_over', 'conversation.resumed', 'conversation.assigned', 'conversation.blocked', 'conversation.stale',
-  'conversation.stale_reviewed', 'contact.blocked', 'contact.stale', 'plan.blocked', 'plan.stale'] as const;
+  'conversation.stale_reviewed', 'contact.blocked', 'contact.stale', 'plan.blocked', 'plan.stale', 'correspondence.message_content_erased'] as const;
 export const manifest: EngineManifestV1 = {
-  id: 'E03', name: 'correspondence', version: '1.0.0', kit: SERVICE_KIT_VERSION, capabilities: CAPABILITIES, emits: EVENTS,
+  id: 'E03', name: 'correspondence', version: '1.1.0', kit: SERVICE_KIT_VERSION, capabilities: CAPABILITIES, emits: EVENTS,
   consumes: ['investigation.outreach_required', 'permission_withdrawn', 'permission_changed', 'source_removed', 'source_corrected', 'source_superseded', 'claim_changed', 'content_changed'],
 };
 export function migrate(sql: Sql): Promise<string[]> { return runMigrations(sql, SCHEMA, migrations); }
 
 export type EngineDeps = Readonly<{ sql: Sql; objects?: ObjectStore; ports?: Ports; config?: EngineConfig }>;
-export type CorrespondenceEngine = StandardEngine & Omit<ReturnType<typeof workspace>, 'internal'> & ReturnType<typeof delivery>;
+export type CorrespondenceEngine = StandardEngine & Omit<ReturnType<typeof workspace>, 'internal'> & ReturnType<typeof delivery> & ReturnType<typeof erasure>;
 
 export function createEngine(deps: EngineDeps): CorrespondenceEngine {
   const config = deps.config ?? {};
@@ -40,6 +41,7 @@ export function createEngine(deps: EngineDeps): CorrespondenceEngine {
   const full = workspace(core);
   const { internal: _internal, ...ws } = full;
   const dl = delivery(core, full);
+  const er = erasure(core);
 
   async function inspect(ctx: ServiceContext, reference: string): Promise<Inspection | null> {
     requireCapability(ctx, 'correspondence:read');
@@ -78,7 +80,7 @@ export function createEngine(deps: EngineDeps): CorrespondenceEngine {
     } else if (parsed.kind === 'contact' || parsed.kind === 'plan') {
       dependents = (await sql.query<{ id: string }>(`select t.id from ${S}.threads t where ${W('t')} and t.${parsed.kind === 'contact' ? 'contact_id' : 'plan_id'}=$4 limit 500`, sc(ctx, parsed.id))).map((t) => ref('conversation', t.id));
     }
-    const state = String(row.state ?? (row.trashed === true ? 'trashed' : row.archived === true ? 'archived' : row.control_mode === 'human' ? 'human_control' : 'open'));
+    const state = row.content_erased_at instanceof Date ? 'content_erased' : String(row.state ?? (row.trashed === true ? 'trashed' : row.archived === true ? 'archived' : row.control_mode === 'human' ? 'human_control' : 'open'));
     return { ref: subject, kind: parsed.kind, title: String(row[t.title] ?? '').slice(0, 200), state, stale: row.stale === true, blocked: row.blocked === true || row.refused === true, staleReasons: reasons.filter((r) => r !== ''),
       versions, sources, dependents, permissions, decisions: row.reconciliation == null ? [] : [row.reconciliation as Json],
       history: audit.map((a) => ({ at: a.at, actorId: a.actorId, action: a.action, detail: a.detail })), data };
@@ -107,7 +109,7 @@ export function createEngine(deps: EngineDeps): CorrespondenceEngine {
         ports: { authorization: core.ports.authorization !== undefined, budget: core.ports.budget !== undefined, evidence: core.ports.evidence !== undefined, useDecision: core.ports.useDecision !== undefined } } };
     } catch { return { ok: false, detail: { database: 'unreachable' } }; }
   }
-  return { manifest, inspect, search, audit, events, health, ...ws, ...dl } as CorrespondenceEngine;
+  return { manifest, inspect, search, audit, events, health, ...ws, ...dl, ...er } as CorrespondenceEngine;
 }
 
 // ───────────────────────────── HTTP ─────────────────────────────
@@ -174,6 +176,7 @@ export function routes(engine: CorrespondenceEngine): Route[] {
     r('PATCH', '/v1/messages/:id', (req) => e.updateDraft(req.ctx, req.params.id as string, { ...body(req), ...key(req) })),
     r('DELETE', '/v1/messages/:id', (req) => e.discardDraft(req.ctx, req.params.id as string)),
     r('POST', '/v1/messages/:id/send', async (req) => ({ status: 202, json: await e.sendMessage(req.ctx, req.params.id as string, { ...body(req), ...key(req) }) })),
+    r('POST', '/v1/messages/:id/erase-content', (req) => e.eraseMessageContent(req.ctx, req.params.id as string, body(req))),
     r('GET', '/v1/messages/:id/raw', async (req) => { const raw = await e.getRawMessage(req.ctx, req.params.id as string); return download(raw.bytes, raw.filename, 'message/rfc822'); }),
     r('POST', '/v1/messages/:id/evidence', (req) => e.handToEvidence(req.ctx, req.params.id as string)),
     r('GET', '/v1/messages/:id/assertions', (req) => e.listAssertions(req.ctx, { messageId: req.params.id as string })),

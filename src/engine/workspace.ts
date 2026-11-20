@@ -42,12 +42,15 @@ function threadView(row: Row | undefined): View {
 }
 export const MESSAGE_COLS = `m.id, m.thread_id, m.mailbox_id, m.compartment, m.direction, m.state, m.origin, m.author_id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.body_text,
   m.structured, m.disclosure, m.identity_flags, m.message_id_header, m.in_reply_to, m.refs, m.raw_sha256, m.raw_size, m.classification, m.classification_detail, m.is_read, m.revision,
-  m.sent_at, m.received_at, m.created_at, m.updated_at`;
+  m.sent_at, m.received_at, m.created_at, m.updated_at, m.content_erased_at, m.content_erased_by, m.content_erasure_reason, m.preserved_as`;
 export function messageView(row: Row | undefined): View {
   const v = view(row);
   v.ref = ref('message', String(v.id), Number(v.revision));
   // Inbound text is attributed, unverified information from an outside party.
   if (v.direction === 'inbound') v.trust = 'untrusted_external_content';
+  // Content preserved elsewhere and erased here: only the tombstone remains.
+  v.contentErased = v.contentErasedAt !== null && v.contentErasedAt !== undefined;
+  if (v.contentErased) v.tombstone = `Content sealed and erased; preserved as ${String(v.preservedAs)}`;
   return v;
 }
 function mailboxView(row: Row | undefined): View {
@@ -423,6 +426,7 @@ export function workspace(core: Core) {
     if (input.replyToMessageId !== undefined) {
       replyTo = (await tx.query(`select m.* from ${S}.messages m where ${W('m')} and m.id=$4 and m.state in ('received','sent','uncertain')`, sc(ctx, id(input.replyToMessageId))))[0] ?? notFound();
       invariant(input.threadId === undefined || input.threadId === replyTo.thread_id, 'invalid_input', 'replyToMessageId belongs to another thread');
+      invariant(replyTo.content_erased_at === null, 'invalid_state', 'The content of that message was sealed and erased here; reply from where it is preserved');
     }
     const threadId = replyTo?.thread_id as string | undefined ?? input.threadId;
     if (threadId !== undefined) thread = (await tx.query(`select t.* from ${S}.threads t where ${W('t')} and t.id=$4 for update`, sc(ctx, id(threadId))))[0] ?? notFound();
@@ -464,7 +468,7 @@ export function workspace(core: Core) {
   async function updateDraft(ctx: ServiceContext, messageId: string, input: { expectedRevision: number; to?: string[]; cc?: string[]; subject?: string; body?: string; structured?: Json; idempotencyKey?: string }): Promise<View> {
     return command(core, ctx, 'correspondence:write', input.idempotencyKey, { messageId, ...input }, async (tx) => {
       const row = (await tx.query(`select m.* from ${S}.messages m where ${W('m')} and m.id=$4 for update`, sc(ctx, id(messageId))))[0] ?? notFound();
-      invariant(['draft', 'cancelled', 'failed'].includes(row.state as string), 'invalid_state', 'Only drafts can be edited');
+      invariant(['draft', 'cancelled', 'failed'].includes(row.state as string) && row.content_erased_at === null, 'invalid_state', 'Only drafts can be edited');
       invariant(row.revision === input.expectedRevision, 'revision_conflict', 'The draft was changed by someone else');
       const human = ctx.actor.kind === 'human';
       invariant(human || (input.to === undefined && input.cc === undefined), 'invalid_input', 'Agents cannot change recipients');

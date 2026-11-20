@@ -1,6 +1,6 @@
 # Correspondence and Outreach engine (E03) — service API
 
-Schema `e03_correspondence` · capability prefix `correspondence` · kit `src/service-kit.ts` 1.0.1
+Manifest version 1.1.0 · schema `e03_correspondence` · capability prefix `correspondence` · kit `src/service-kit.ts` 1.0.1
 (sha256 `95475a907267ba1fdd54b557aabe5645c37add9788a5b2d0854d9accfd5d8ea5`, byte-identical to the Identity engine copy;
 checked by `scripts/verify-contracts.mjs`). `src/contracts.ts` is the Identity version.
 
@@ -51,8 +51,10 @@ Standalone: `npm run serve` (`src/engine/serve.ts`). Environment: `DATABASE_URL`
 | `correspondence:sync` | provider synchronization |
 | `correspondence:upstream` | `applyUpstreamChange` (falls back to `correspondence:write`) |
 | `correspondence:events` | outbox feed |
+| `correspondence:erase` | erase a message's readable content after it was preserved elsewhere (person or service; never an agent) |
 
-`send`, `contact`, `grant`, `admin`, `events` are never satisfied by `correspondence:*`. Every method takes `ctx` first and
+`send`, `contact`, `grant`, `admin`, `events` are never satisfied by `correspondence:*`; neither is `erase`, which the engine
+checks by exact name itself (the vendored kit does not list it as sensitive). Every method takes `ctx` first and
 filters on tenant, project and compartments; a foreign or hidden object is `not_found`.
 
 ## Service methods
@@ -162,6 +164,7 @@ linkAssertion(ctx, assertionId, { verificationRef }): Promise<View>
 handToEvidence(ctx, messageId): Promise<{ message, evidenceRef, attachments }>     // needs EvidencePort
 reviewStale(ctx, threadId, { note }): Promise<View>                      // human
 applyUpstreamChange(ctx, change): Promise<{ affected: string[] }>
+eraseMessageContent(ctx, messageId, { reason, preservedAs }): Promise<View>   // exact correspondence:erase; person or service; idempotent
 inspect / search / audit / events / health                                // kit StandardEngine
 ```
 
@@ -196,6 +199,7 @@ Bearer token (kit `createTokenVerifier`) on everything except `/healthz` and `/v
 | `GET /v1/messages/search?q=` | full-text search |
 | `POST /v1/messages`, `GET/PATCH/DELETE /v1/messages/:id` | draft create/get/update/discard |
 | `POST /v1/messages/:id/send` (202; header `Idempotency-Key`) | `sendMessage` |
+| `POST /v1/messages/:id/erase-content` `{ reason, preservedAs }` | `eraseMessageContent` |
 | `GET /v1/messages/:id/raw`, `POST /v1/messages/:id/evidence`, `GET/POST /v1/messages/:id/assertions` | raw download, evidence, assertions |
 | `POST /v1/messages/:id/attachments?filename=` (body = bytes), `GET/DELETE /v1/attachments/:id` | attachments |
 | `PATCH /v1/assertions/:id`, `GET /v1/assertions?conversationId=&questionRef=` | link, list |
@@ -216,7 +220,7 @@ Error statuses: kit mapping plus `suppressed` 409, `unavailable`/`provider_unava
 `message.delivered`, `message.bounced` → `E03:message:<id>` (the outbound message) · `message.received` → inbound message ·
 `correspondence.reply_received` → `E03:message:<id>` with `{ questionRef, conversation, source, attributedTo, contact, status:'attributed_unverified', candidates:[{ ref:'E03:assertion:<id>', text (≤300 chars), start, end }] }`
 (`start`/`end` are offsets into the message `bodyText`) · `answer.proposed` → message (reviewer-selected quotes, same shape) ·
-`message.preserved_as_evidence` → message · `contact.refused` → message · `suppression.added|lifted` → suppression ·
+`message.preserved_as_evidence` → message · `correspondence.message_content_erased` → message (`{ preservedAs, conversation, objectsDeleted, attachments }`) · `contact.refused` → message · `suppression.added|lifted` → suppression ·
 `outreach.plan.created` → plan · `outreach.candidate.verified` → contact · `grant.created|revoked` → grant ·
 `conversation.taken_over|resumed` → conversation or mailbox · `conversation.assigned`, `conversation.stale|blocked|stale_reviewed` → conversation ·
 `contact.stale|blocked` → contact · `plan.stale|blocked` → plan (`{ reason, cause: eventId, kind }`).
@@ -251,14 +255,40 @@ Nothing in this engine marks an assertion verified: the `assertions.status` colu
 - **Upstream.** `permission_withdrawn`, `permission_changed`, `source_removed` mark matching contacts, plans and conversations
   `blocked` (automation refused with `consent_denied`); other kinds mark them `stale` until a human `reviewStale`. Matching is
   by `sources` (question uref, contact route uref) with `urefMatches`. Queued automated dispatches are cancelled. Idempotent by `eventId`.
+- **Content erasure ("seal on arrival").** `eraseMessageContent` is for a host that has preserved a message elsewhere (for
+  example encrypted for its researchers, as evidence in E05) and wants this engine to keep no readable copy.
+  `preservedAs` must be a universal reference to another engine (an `E03:` reference is refused); when it is an E05
+  reference and an `EvidencePort` is connected, the engine confirms it exists and is available, otherwise nothing is erased.
+  With an `AuthorizationPort` the capability is re-checked immediately before the effect. Allowed for received inbound
+  messages and for outbound messages that were sent, failed or cancelled with no send pending or unreconciled.
+  Removed: subject, text, HTML, sender and recipient addresses and display names (and the inbound author id, which is the
+  sender address), the original RFC822 bytes and attachment bytes (deleted from the object store before the rows change,
+  inside the same transaction, so a crash can only leave an unerased message that a retry finishes), attachment names,
+  types and digests, the original's digest, the search vector, assertion quotes and attributions, draft snapshots, the
+  thread subject when it came from this message (and the snippet, which is derived), readable text in this engine's own
+  outbox payloads about the message (`correspondence.reply_received`/`answer.proposed` candidates and `attributedTo`), and
+  stored idempotent results naming it.
+  Kept, deliberately: ids, direction, state, classification kind and DSN action/status, dates (received/sent and the
+  declared `Date`), `Message-ID`, `In-Reply-To`, `References` (threading, duplicate detection and send reconciliation
+  match on them; note a Message-ID often names the sender's mail domain), the dedupe key and provider ids (so a provider
+  re-delivering the message is recognised as a duplicate and the plaintext does not come back), the thread/contact links,
+  suppressions (an address that asked not to be contacted stays suppressed: delivery state), dispatch recipients of our own
+  outbound mail, and the hash-chained audit trail (which never held content: ids, digests and counts).
+  Views show `contentErased: true`, `preservedAs` and `tombstone` ("Content sealed and erased; preserved as <ref>"); the
+  body text, subject and snippet show the tombstone; `inspect` reports state `content_erased`; the raw download is
+  `not_found`; replying to an erased message, editing it or handing it to evidence is refused. Idempotent: a repeated
+  call returns the erased message unchanged and emits nothing. The audit action is `message.content_erased`.
+  Limits: PostgreSQL keeps old row versions until vacuum and in WAL, backups and point-in-time restore history; a
+  filesystem object store unlinks files without overwriting them, and a versioned S3 bucket keeps old versions; the mail
+  provider still holds its own copy (synchronization is read-only). Erasure here does not reach those copies.
 - **Budget.** With a `BudgetPort`, one unit (`correspondence.send`, `message`) is reserved per dispatch, committed on
   accepted/uncertain and released otherwise; `budget_exhausted` cancels the dispatch.
 
 ## Status
 
 Tested locally against real PostgreSQL 16, a real SMTP server (`smtp-server`) and an in-test IMAP4rev1 server over loopback
-sockets (`tests/engine*.test.ts`, 18 tests): acceptance B, refusal, duplicate inbound, grant revocation, takeover fencing,
-ambiguous send and reconciliation, crash recovery, bounces, workspace surface, IMAP checkpoints and UIDVALIDITY reset, tenant
+sockets (`tests/engine*.test.ts`, 19 tests): acceptance B, refusal, duplicate inbound, grant revocation, takeover fencing,
+ambiguous send and reconciliation, crash recovery, bounces, content erasure, workspace surface, IMAP checkpoints and UIDVALIDITY reset, tenant
 and compartment isolation, capability checks, credential sealing, upstream blocking, ports, HTTP routes.
 
 Implemented, **not verified against a live provider**:

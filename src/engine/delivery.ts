@@ -431,7 +431,7 @@ export function delivery(core: Core, ws: ReturnType<typeof workspace>) {
         if (parent === undefined) await tx.query(`delete from ${S}.threads t where ${T('t')} and t.id=$4`, sc(ctx, thread.id));
         const prior = (await tx.query(`select ${MESSAGE_COLS} from ${S}.messages m where ${T('m')} and m.mailbox_id=$4 and m.dedupe_key=$5 and m.direction='inbound'`, sc(ctx, mailbox.id, parsed.dedupeKey)))[0] as Row;
         await mapProvider(prior.id as string);
-        if (prior.raw_sha256 !== parsed.sha256) await record(tx, ctx, 'message.duplicate_id_different_content', ref('message', prior.id as string), { sha256: parsed.sha256 });
+        if (prior.content_erased_at === null && prior.raw_sha256 !== parsed.sha256) await record(tx, ctx, 'message.duplicate_id_different_content', ref('message', prior.id as string), { sha256: parsed.sha256 });
         return { message: messageView(prior), duplicate: true, observedOutbound: false };
       }
       // Original bytes are preserved exactly; the parsed columns are a derived view.
