@@ -271,7 +271,8 @@ Nothing in this engine marks an assertion verified: the `assertions.status` colu
   Kept, deliberately: ids, direction, state, classification kind and DSN action/status, dates (received/sent and the
   declared `Date`), `Message-ID`, `In-Reply-To`, `References` (threading, duplicate detection and send reconciliation
   match on them; note a Message-ID often names the sender's mail domain), the dedupe key and provider ids (so a provider
-  re-delivering the message is recognised as a duplicate and the plaintext does not come back), the thread/contact links,
+  re-delivering the message is recognised as a duplicate and the plaintext does not come back), the thread link and the contact link of conversations we started (a thread that holds only erased messages loses its contact
+  link, and contact history loses its pointer to the message, so a recorded contact's address does not identify the sender),
   suppressions (an address that asked not to be contacted stays suppressed: delivery state), dispatch recipients of our own
   outbound mail, and the hash-chained audit trail (which never held content: ids, digests and counts).
   Views show `contentErased: true`, `preservedAs` and `tombstone` ("Content sealed and erased; preserved as <ref>"); the

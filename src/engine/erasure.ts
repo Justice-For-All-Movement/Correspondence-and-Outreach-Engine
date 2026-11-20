@@ -9,7 +9,8 @@
 // Kept: the row itself and its ids, direction, state, classification kind, dates (received/sent, declared Date header),
 // Message-ID, In-Reply-To and References (threading, duplicate detection and reconciliation match on them), the dedupe key
 // (so a provider re-delivering the message does not bring the plaintext back), provider ids, and the thread and contact
-// links. Suppressions are kept: an address that asked not to be contacted stays suppressed (delivery state).
+// links of conversations we started (a thread holding only erased mail drops its contact link, and contact history drops
+// its pointer to the message). Suppressions are kept: an address that asked not to be contacted stays suppressed (delivery state).
 // The audit trail is hash-chained and is not rewritten; it never held message content (ids, digests and counts only).
 import { DomainError, invariant } from '../contracts.ts';
 import type { Json } from '../contracts.ts';
@@ -105,6 +106,11 @@ export function erasure(core: Core) {
       // The thread's subject came from its first message; once no readable message carries it, it goes too.
       await tx.query(`update ${S}.threads t set subject=$6, updated_at=$7 where ${T('t')} and t.id=$4 and (t.subject=$5 or not exists (
         select 1 from ${S}.messages x where x.thread_id=t.id and x.state<>'discarded' and x.content_erased_at is null))`, sc(ctx, msg.thread_id, msg.subject, ERASED_SUBJECT, ctx.now));
+      // A thread left with no readable message (mail that arrived unprompted) no longer names a contact, and contact history
+      // no longer points at the message: otherwise a recorded contact's address would identify who sent the sealed content.
+      await tx.query(`update ${S}.threads t set contact_id=null where ${T('t')} and t.id=$4 and t.plan_id is null and not exists (
+        select 1 from ${S}.messages x where x.thread_id=t.id and x.state<>'discarded' and x.content_erased_at is null)`, sc(ctx, msg.thread_id));
+      await tx.query(`update ${S}.contact_events c set ref=null where ${T('c')} and c.ref=$4`, sc(ctx, ref('message', mid)));
       // Readable text in this engine's own outbox payloads and stored command results about the message.
       const subject = ref('message', mid);
       for (const e of await tx.query<{ seq: string; payload: Json }>(`select seq::text as seq, payload from ${S}._events where tenant_id=$1 and project_id=$2 and subject=$3 and (payload ? 'candidates' or payload ? 'attributedTo')`, [ctx.tenantId, ctx.projectId, subject])) {

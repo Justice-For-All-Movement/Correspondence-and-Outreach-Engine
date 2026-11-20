@@ -110,6 +110,13 @@ test('erase-content: readable content leaves rows, objects, search and derived t
     // A draft (or a send still pending) cannot be erased.
     const d2 = await e.createDraft(me, { mailboxId, to: ['other@example.net'], subject: 'x', body: 'y' });
     await assert.rejects(ee.eraseMessageContent(eraser(), d2.id as string, { reason: 'sealed', preservedAs: PRESERVED }), code('invalid_state'));
+    // Unprompted mail from a recorded contact: once erased, the thread no longer names the contact.
+    const known = await e.upsertContact(me, { address: 'known-person@example.net', whyMayKnow: 'met before' });
+    const fromKnown = await e.ingestRawMessage(service(), mailboxId, reply({ from: 'known-person@example.net', to: 'desk@example.org', subject: 'Unprompted', body: 'A note.' }));
+    assert.equal((await e.getThread(me, fromKnown.message.threadId as string)).contactId, known.id);
+    await ee.eraseMessageContent(eraser(), fromKnown.message.id as string, { reason: 'sealed', preservedAs: PRESERVED });
+    assert.equal((await e.getThread(me, fromKnown.message.threadId as string)).contactId, null);
+    assert.equal((await h.sql.query(`select 1 from e03_correspondence.contact_events where ref=$1`, [`E03:message:${fromKnown.message.id}`])).length, 0);
     // HTTP route exists.
     assert.ok(routes(e).some((r) => r.method === 'POST' && r.path === '/v1/messages/:id/erase-content'));
   });
