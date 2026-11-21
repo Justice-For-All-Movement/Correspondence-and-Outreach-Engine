@@ -155,4 +155,10 @@ create table {s}.upstream_changes (
 );
 ` }, { id: '002_no_response', sql: `
 alter table {s}.threads add column if not exists no_response_at timestamptz;
+` }, { id: '003_content_erasure', sql: `
+alter table {s}.messages add column if not exists content_erased_at timestamptz;
+alter table {s}.messages add column if not exists content_erased_by text;
+alter table {s}.messages add column if not exists content_erasure_reason text;
+alter table {s}.messages add column if not exists preserved_as text;
+alter table {s}.attachments add column if not exists erased_at timestamptz;
 ` }];
